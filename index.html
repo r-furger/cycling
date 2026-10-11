@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>VeloCH – Swiss cycling navigator</title>
+<meta name="description" content="Personal cycling navigator for Switzerland: swisstopo maps, GPX import, GPS turn-by-turn navigation, elevation profiles, public transport and cable cars nearby.">
+<meta name="theme-color" content="#1b5e20">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="VeloCH">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" crossorigin="">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <div id="map"></div>
+
+  <header id="topbar">
+    <div class="search">
+      <input id="search" type="search" placeholder="Search place, pass, peak, address…" autocomplete="off" enterkeyhint="search">
+      <ul id="search-results" hidden></ul>
+    </div>
+  </header>
+
+  <div id="map-buttons">
+    <button id="btn-locate" title="My position" aria-label="My position">◎</button>
+    <button id="btn-layers" title="Map layers" aria-label="Map layers">▤</button>
+    <button id="btn-fit" title="Zoom to route" aria-label="Zoom to route" hidden>⤢</button>
+  </div>
+  <div id="layer-panel" hidden></div>
+
+  <aside id="panel" class="collapsed">
+    <div id="panel-handle"><span></span></div>
+    <nav id="tabs">
+      <button data-tab="routes" class="active">Routes</button>
+      <button data-tab="plan">Plan</button>
+      <button data-tab="nav">Navigate</button>
+      <button data-tab="nearby">Nearby</button>
+    </nav>
+
+    <section id="tab-routes" class="tab active">
+      <div id="route-card" class="route-card" hidden>
+        <div class="rc-head"><div><strong id="rc-name"></strong><div class="meta" id="rc-meta"></div></div><button class="icon" id="rc-close" title="Close route">✕</button></div>
+        <div class="stats" id="rc-stats"></div>
+        <div class="row wrap">
+          <button class="primary" id="rc-nav">▶ Navigate</button>
+          <button id="rc-save" hidden>Save</button>
+          <button id="rc-offline">Offline maps</button>
+          <button id="rc-gpx">GPX</button>
+        </div>
+        <div id="rc-progress" class="progress" hidden><div></div><span></span></div>
+      </div>
+      <div class="row">
+        <label class="btn primary file-btn">⤒ Import GPX<input type="file" id="gpx-file" accept=".gpx,application/gpx+xml,application/xml,text/xml" multiple hidden></label>
+        <button id="goto-plan">✎ Plan a route</button>
+      </div>
+      <p class="hint" id="routes-empty">No saved routes yet. Import a GPX file (komoot, Strava, SchweizMobil exports all work) or plan a route on the map. Everything is stored on this device.</p>
+      <ul id="route-list"></ul>
+      <div class="install-box">
+        <button id="btn-install" class="small" hidden>Install as app</button>
+        <p class="hint small" id="ios-hint" hidden>On iPhone: tap Share → “Add to Home Screen” to install this as an app.</p>
+      </div>
+      <p class="hint small about">Maps © swisstopo (open data) · © OpenStreetMap contributors · routing by BRouter · timetables by transport.opendata.ch</p>
+    </section>
+
+    <section id="tab-plan" class="tab">
+      <p class="hint">Tap the map to add waypoints. Drag a waypoint to move it, tap it to remove it.</p>
+      <label class="field">Bike / routing profile
+        <select id="plan-profile"></select>
+      </label>
+      <div class="row">
+        <button id="plan-undo" disabled>↶ Undo</button>
+        <button id="plan-reverse" disabled>⇄ Reverse</button>
+        <button id="plan-clear" disabled>✕ Clear</button>
+      </div>
+      <div id="plan-status" class="hint small"></div>
+      <div class="stats" id="plan-stats"></div>
+      <div class="row wrap">
+        <button class="primary" id="plan-save" disabled>Save route</button>
+        <button id="plan-nav" disabled>▶ Navigate</button>
+        <button id="plan-export" disabled>GPX</button>
+      </div>
+    </section>
+
+    <section id="tab-nav" class="tab">
+      <div id="nav-idle">
+        <p class="hint" id="nav-route-info">Select a saved route or plan one, then start. “Free ride” just records your track.</p>
+        <div class="row wrap">
+          <button class="primary" id="nav-start">▶ Start navigation</button>
+          <button id="nav-free">● Free ride (record)</button>
+        </div>
+        <label class="check"><input type="checkbox" id="nav-voice" checked> Voice instructions</label>
+        <label class="check"><input type="checkbox" id="nav-keep" checked> Keep screen on while navigating</label>
+        <div id="last-ride" hidden>
+          <h4>Last ride</h4>
+          <div class="stats" id="last-ride-stats"></div>
+          <div class="row"><button class="primary" id="ride-save">Save ride as route</button><button id="ride-discard">Discard</button></div>
+        </div>
+      </div>
+      <div id="nav-active" hidden>
+        <div class="stats" id="nav-stats"></div>
+        <div class="row"><button class="danger" id="nav-stop">■ Stop</button><button id="nav-recenter">Re-center</button></div>
+        <p class="hint small">The orange dashed line is your recorded track. Drag the map to look around; tap Re-center to follow again.</p>
+      </div>
+    </section>
+
+    <section id="tab-nearby" class="tab">
+      <div id="nearby-cats" class="chips"></div>
+      <div class="row">
+        <button class="primary" id="nearby-area">Search map area</button>
+        <button id="nearby-me">Around me</button>
+      </div>
+      <div id="nearby-status" class="hint small">Zoom to an area (max ~60 km) and search. Opening hours and timetables are loaded live.</div>
+      <ul id="nearby-list"></ul>
+    </section>
+  </aside>
+
+  <div id="profile-box" hidden><svg id="profile"></svg></div>
+
+  <div id="nav-hud" hidden>
+    <div class="hud-top">
+      <span id="hud-icon">⤳</span>
+      <div class="hud-text"><div id="hud-instr">Waiting for GPS…</div><div id="hud-then"></div></div>
+      <button id="hud-stop" title="Stop navigation">■</button>
+    </div>
+    <div id="hud-stats"></div>
+  </div>
+  <button id="btn-recenter" hidden>⌖ Re-center</button>
+  <div id="toast" hidden></div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/i18next/23.16.8/i18next.min.js" crossorigin=""></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.9.0/suncalc.min.js" crossorigin=""></script>
+<script>if (window.i18next && !window.i18next.default) window.i18next.default = window.i18next;</script>
+<script src="https://cdn.jsdelivr.net/npm/opening_hours@3.8.0/build/opening_hours.min.js" crossorigin=""></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
