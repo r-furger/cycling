@@ -37,10 +37,11 @@
   <aside id="panel" class="collapsed">
     <div id="panel-handle"><span></span></div>
     <nav id="tabs">
-      <button data-tab="routes" class="active">Routes</button>
-      <button data-tab="plan">Plan</button>
-      <button data-tab="nav">Navigate</button>
-      <button data-tab="nearby">Nearby</button>
+      <button data-tab="routes" class="active"><span class="ico">🗺</span>Routes</button>
+      <button data-tab="plan"><span class="ico">✎</span>Plan</button>
+      <button data-tab="nav"><span class="ico">▶</span>Ride</button>
+      <button data-tab="nearby"><span class="ico">🚡</span>Nearby</button>
+      <button data-tab="stats"><span class="ico">📈</span>Stats</button>
     </nav>
 
     <section id="tab-routes" class="tab active">
@@ -95,12 +96,13 @@
           <button id="nav-free">● Free ride (record)</button>
         </div>
         <label class="check"><input type="checkbox" id="nav-voice" checked> Voice instructions</label>
-        <label class="check"><input type="checkbox" id="nav-keep" checked> Keep screen on while navigating</label>
-        <div id="last-ride" hidden>
-          <h4>Last ride</h4>
-          <div class="stats" id="last-ride-stats"></div>
-          <div class="row"><button class="primary" id="ride-save">Save ride as route</button><button id="ride-discard">Discard</button></div>
+        <label class="check"><input type="checkbox" id="nav-keep" checked> Keep screen on while riding</label>
+        <div id="ride-done" hidden>
+          <h4>Ride finished</h4>
+          <div class="stats" id="ride-done-stats"></div>
+          <div class="row wrap"><button class="primary" id="ride-stats-btn">Open Stats</button><button id="ride-route">Save track as route</button><button id="ride-ok">OK</button></div>
         </div>
+        <p class="hint small">Every ride is saved automatically while you ride, so a reload or crash loses nothing – reopen the app and tap Resume. Phones stop GPS for web apps that are closed or in the background, so keep VeloCH on screen (it stays awake) while riding.</p>
       </div>
       <div id="nav-active" hidden>
         <div class="stats" id="nav-stats"></div>
@@ -108,6 +110,8 @@
         <p class="hint small">The orange dashed line is your recorded track. Drag the map to look around; tap Re-center to follow again.</p>
       </div>
     </section>
+
+    <section id="tab-stats" class="tab"><div id="dashboard"></div></section>
 
     <section id="tab-nearby" class="tab">
       <div id="nearby-cats" class="chips"></div>
@@ -122,7 +126,12 @@
 
   <div id="profile-box" hidden><svg id="profile"></svg></div>
 
-  <div id="nav-hud" hidden>
+  <div id="resume-banner" hidden>
+    <div class="rb-text"><b>Ride in progress</b><span id="resume-info"></span></div>
+    <div class="row"><button class="primary" id="resume-yes">Resume</button><button id="resume-finish">Finish</button><button id="resume-discard">Discard</button></div>
+  </div>
+
+  <div id="nav-hud" hidden title="Tap to enlarge">
     <div class="hud-top">
       <span id="hud-icon">⤳</span>
       <div class="hud-text"><div id="hud-instr">Waiting for GPS…</div><div id="hud-then"></div></div>

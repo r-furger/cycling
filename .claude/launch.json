@@ -1,6 +1,31 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "veloch", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "8765", "--bind", "127.0.0.1"], "port": 8765 }
+    {
+      "name": "veloch",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8790",
+        "--bind",
+        "127.0.0.1"
+      ],
+      "port": 8790
+    },
+    {
+      "name": "em-atlas",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8781",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "/Users/retofurger/projects/em-monitor/web"
+      ],
+      "port": 8781
+    }
   ]
 }

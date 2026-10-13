@@ -5,14 +5,25 @@ import { remainingAscent } from './elevation.js';
 export class Navigator {
   constructor({ onUpdate, onEvent }) { this.onUpdate = onUpdate; this.onEvent = onEvent; this.running = false; this.trail = []; }
 
-  start(route) {
+  // resume: a saved ride record {startedAt, points:[[lat,lon,alt,t]], movingTime, maxSpeed} to continue from.
+  start(route, resume = null) {
     this.route = route && route.points?.length > 1 ? route : null;
     this.running = true; this.finished = false; this.lastIndex = null; this.offSince = null; this.offAnnounced = false;
-    this.trail = []; this.startTime = Date.now(); this.ridden = 0; this.movingTime = 0; this.lastPos = null;
+    this.trail = []; this.startTime = Date.now(); this.ridden = 0; this.movingTime = 0; this.maxSpeed = 0; this.lastPos = null;
     this.announced = new Map(); this.recent = []; this.lastHeading = null;
     this.sortedHints = (this.route?.hints || []).slice().sort((a, b) => a.dist - b.dist);
+    if (resume) {
+      this.startTime = resume.startedAt || this.startTime;
+      this.trail = (resume.points || []).map(a => ({ lat: a[0], lon: a[1], alt: a[2] ?? undefined, time: a[3] }));
+      for (let i = 1; i < this.trail.length; i++) this.ridden += haversine(this.trail[i - 1], this.trail[i]);
+      this.movingTime = resume.movingTime || 0; this.maxSpeed = resume.maxSpeed || 0;
+      const last = this.trail[this.trail.length - 1];
+      if (last) this.lastPos = { lat: last.lat, lon: last.lon, t: last.time };
+    }
   }
   stop() { this.running = false; }
+  // Compact, storable state of the ride so far.
+  snapshot() { return { points: this.trail.map(p => [+p.lat.toFixed(6), +p.lon.toFixed(6), p.alt != null ? Math.round(p.alt) : null, p.time]), distance: Math.round(this.ridden), movingTime: Math.round(this.movingTime), maxSpeed: this.maxSpeed, startedAt: this.startTime }; }
 
   baseState(pos, extra) { return { pos, speed: 0, heading: this.lastHeading, elapsed: (Date.now() - this.startTime) / 1000, ridden: this.ridden, movingTime: this.movingTime, ...extra }; }
 
@@ -28,11 +39,12 @@ export class Navigator {
         if (speed == null) speed = dt > 0 ? d / dt : 0;
         this.lastHeading = isFinite(pos.heading) && pos.heading != null ? pos.heading : bearing(this.lastPos, pos);
         if (speed > 0.8 && dt < 30) this.movingTime += dt;
-        this.trail.push({ lat: pos.lat, lon: pos.lon, time: now });
+        if (speed < 25 && speed > this.maxSpeed && dt < 30) this.maxSpeed = speed;
+        this.trail.push({ lat: pos.lat, lon: pos.lon, alt: pos.alt, time: now });
         this.lastPos = { ...pos, t: now };
       } else if (speed == null) speed = 0;
     } else {
-      this.trail.push({ lat: pos.lat, lon: pos.lon, time: now });
+      this.trail.push({ lat: pos.lat, lon: pos.lon, alt: pos.alt, time: now });
       this.lastPos = { ...pos, t: now };
       if (isFinite(pos.heading) && pos.heading != null) this.lastHeading = pos.heading;
     }

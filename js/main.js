@@ -7,21 +7,24 @@ import { ElevationChart } from './profile.js';
 import { PROFILES, routeBRouter } from './router.js';
 import { Navigator } from './nav.js';
 import { CATEGORIES, searchNearby, describeOpening, departures, typeLabel } from './nearby.js';
-import { routesDB, settings } from './storage.js';
+import { routesDB, ridesDB, settings } from './storage.js';
+import { DEFAULT_PROFILE, rideStats, estimateRouteKcal } from './fitness.js';
+import { renderDashboard, buildExport, ridesCSV, rideSummary, sendWebhook } from './dashboard.js';
 import { tilesForRoute, cacheTiles, tileCacheInfo, clearTileCache, tileUrl } from './offline.js';
 
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const isMobile = () => matchMedia('(max-width: 799px)').matches;
+const isMobile = () => matchMedia('(max-width: 899px), (max-height: 499px)').matches;
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
 
 const state = {
   routes: [], route: null, tab: 'routes',
   plan: { waypoints: [], profile: settings.get('profile', 'trekking'), abort: null, id: null },
   navigating: false, follow: true, pos: null, headingPos: null, heading: null, watchId: null, flyOnFix: false,
-  nearby: [], deferredInstall: null, wakeLock: null, lastRide: null,
+  nearby: [], deferredInstall: null, wakeLock: null, lastRide: null, rides: [], metric: settings.get('metric', 'distance'),
 };
+const profileSettings = () => ({ ...DEFAULT_PROFILE, ...settings.get('profile', {}) });
 
 const mapApi = createMap($('#map'));
 const { map } = mapApi;
@@ -54,6 +57,7 @@ function setTab(name) {
   document.body.classList.toggle('planning', name === 'plan' && !state.navigating);
   if (isMobile() && sheetLevel() === 'collapsed') setSheet('half');
   if (name === 'nav') renderNavIdle();
+  if (name === 'stats') renderStats();
 }
 $$('#tabs button').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
 $('#goto-plan').onclick = () => setTab('plan');
@@ -66,7 +70,7 @@ async function makeRoute({ name, points, source, waypoints = [], hints = [], pro
   let samples = null, eleSource = null;
   try { const r = await buildProfile(pts, { preferSwisstopo: !quick }); if (r) { samples = r.samples; eleSource = r.source; } } catch (e) { console.warn(e); }
   const es = samples ? elevationStats(samples) : { ascent: 0, descent: 0, min: null, max: null };
-  return { id: id || uuid(), name: name || 'Route', source, createdAt: Date.now(), points: pts, samples, eleSource, stats: { distance, ...es, time: estimateTime(distance, es.ascent) }, hints, waypoints, profile };
+  return { id: id || uuid(), name: name || 'Route', source, createdAt: Date.now(), points: pts, samples, eleSource, stats: { distance, ...es, time: estimateTime(distance, es.ascent), kcal: samples ? estimateRouteKcal(samples, profileSettings()) : null }, hints, waypoints, profile };
 }
 const serialize = r => { const { _tmp, ...rest } = r; return { ...rest, points: r.points.map(p => [p.lat, p.lon, p.ele ?? null, p.time ?? null]) }; };
 function deserialize(rec) { const points = rec.points.map(a => ({ lat: a[0], lon: a[1], ele: a[2] ?? undefined, time: a[3] ?? undefined })); cumulative(points); return { ...rec, points }; }
@@ -75,6 +79,7 @@ const isSaved = r => !!r && state.routes.some(x => x.id === r.id);
 function statsHtml(st) {
   const tiles = [[fmtDist(st.distance), 'Distance'], ['↑ ' + (st.ascent ?? 0) + ' m', 'Ascent'], ['↓ ' + (st.descent ?? 0) + ' m', 'Descent'], [fmtDuration(st.time || 0), 'Est. time']];
   if (st.max != null) tiles.push([st.max + ' m', 'Highest point']);
+  if (st.kcal != null) tiles.push(['~' + st.kcal + ' kcal', 'Est. energy']);
   return tiles.map(([v, l]) => `<div class="stat"><span class="v">${v}</span><span class="l">${l}</span></div>`).join('');
 }
 function setActiveRoute(route, { fit = true } = {}) {
@@ -236,7 +241,7 @@ function startGPS() {
 }
 function stopGPS() { if (state.watchId != null) navigator.geolocation.clearWatch(state.watchId); state.watchId = null; $('#btn-locate').classList.remove('active'); }
 function onGeo(p) {
-  const pos = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, heading: p.coords.heading, speed: p.coords.speed, t: p.timestamp };
+  const pos = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, alt: p.coords.altitude, heading: p.coords.heading, speed: p.coords.speed, t: p.timestamp };
   state.pos = pos;
   if (pos.heading != null && isFinite(pos.heading)) state.heading = pos.heading;
   else if (state.headingPos && haversine(state.headingPos, pos) > 5) { state.heading = bearingDeg(state.headingPos, pos); state.headingPos = pos; }
@@ -255,7 +260,7 @@ map.on('dragstart', () => { if (state.navigating) { state.follow = false; $('#bt
 function recenter() { state.follow = true; $('#btn-recenter').hidden = true; if (state.pos) map.panTo([state.pos.lat, state.pos.lon]); }
 $('#btn-recenter').onclick = recenter; $('#nav-recenter').onclick = recenter;
 
-// ---------- navigation
+// ---------- navigation & rides
 $('#nav-voice').checked = settings.get('voice', true); $('#nav-voice').onchange = e => settings.set('voice', e.target.checked);
 $('#nav-keep').checked = settings.get('keepawake', true); $('#nav-keep').onchange = e => settings.set('keepawake', e.target.checked);
 function speak(text) {
@@ -266,52 +271,106 @@ async function requestWakeLock() {
   if (!settings.get('keepawake', true) || !navigator.wakeLock) return;
   try { state.wakeLock = await navigator.wakeLock.request('screen'); } catch { }
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.navigating) requestWakeLock(); });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && state.navigating) { requestWakeLock(); startGPS(); } });
 function renderNavIdle() {
   const r = state.route;
   $('#nav-route-info').textContent = r ? `Ready: "${r.name}" · ${fmtDist(r.stats.distance)} · ↑ ${r.stats.ascent} m${r.hints?.length ? ' · turn-by-turn' : ' · follow-the-track'}` : 'Select a saved route or plan one, then start. "Free ride" just records your track.';
   $('#nav-start').disabled = !r;
 }
-function startNavigation(route) {
+
+let ride = null, persistTimer = null;
+async function loadRides() { try { state.rides = (await ridesDB.all()).sort((a, b) => b.startedAt - a.startedAt); } catch (e) { console.warn(e); } }
+
+async function startNavigation(route, resumeRide = null) {
   if (route && route.points.length < 2) return toast('Route has no track');
   if (!('geolocation' in navigator)) return toast('No GPS available in this browser');
   if (!isSecureContext) return toast('GPS needs HTTPS – open the site via https:// or localhost');
+  if (state.navigating) return;
+  ride = resumeRide || { id: uuid(), startedAt: Date.now(), status: 'active', mode: route ? 'nav' : 'free', routeId: route?.id || null, routeName: route?.name || null, points: [], distance: 0, movingTime: 0, maxSpeed: 0 };
+  ride.status = 'active'; settings.set('activeRide', ride.id);
+  try { await ridesDB.put(ride); } catch (e) { console.warn(e); }
   state.navigating = true; state.follow = true; $('#btn-recenter').hidden = true;
   document.body.classList.add('navigating'); document.body.classList.remove('planning');
-  nav.start(route); startGPS(); requestWakeLock();
-  if (route) { setActiveRoute(route, { fit: false }); if (state.pos) map.setView([state.pos.lat, state.pos.lon], Math.max(map.getZoom(), 15)); else state.flyOnFix = true; }
-  else { if (state.pos) map.setView([state.pos.lat, state.pos.lon], 15); else state.flyOnFix = true; }
-  $('#nav-idle').hidden = true; $('#nav-active').hidden = false; $('#nav-hud').hidden = false; $('#nav-hud').classList.remove('off');
+  nav.start(route, resumeRide); startGPS(); requestWakeLock();
+  mapApi.setTrail(nav.trail);
+  if (route) { setActiveRoute(route, { fit: false }); }
+  if (state.pos) map.setView([state.pos.lat, state.pos.lon], Math.max(map.getZoom(), 15)); else state.flyOnFix = true;
+  $('#nav-idle').hidden = true; $('#nav-active').hidden = false; $('#ride-done').hidden = true; $('#nav-hud').hidden = false; $('#nav-hud').classList.remove('off');
   $('#hud-icon').textContent = route ? '⤳' : '●'; $('#hud-instr').textContent = 'Waiting for GPS…'; $('#hud-then').textContent = ''; $('#hud-stats').innerHTML = '';
   setTab('nav'); if (isMobile()) setSheet('collapsed');
-  speak(route ? 'Navigation started' : 'Recording started');
+  speak(resumeRide ? 'Ride resumed' : route ? 'Navigation started' : 'Recording started');
 }
-function stopNavigation() {
-  nav.stop(); state.navigating = false; document.body.classList.remove('navigating');
-  $('#nav-idle').hidden = false; $('#nav-active').hidden = true; $('#nav-hud').hidden = true; $('#btn-recenter').hidden = true;
+// Save the ride so far every few seconds so nothing is lost on reload or crash.
+function persistRide() {
+  if (!ride || !nav.running || persistTimer) return;
+  persistTimer = setTimeout(async () => { persistTimer = null; if (!ride || !nav.running) return; Object.assign(ride, nav.snapshot()); try { await ridesDB.put(ride); } catch (e) { console.warn(e); } }, 4000);
+}
+async function finalizeRide(r, pointsArr) {
+  const pts = pointsArr.map(a => ({ lat: a[0], lon: a[1], ele: a[2] ?? undefined, time: a[3] }));
+  cumulative(pts);
+  r.endedAt = Math.max(Date.now(), pts[pts.length - 1]?.time || 0); r.status = 'done'; r.points = pointsArr;
+  if (pts.length < 5 || pts[pts.length - 1].dist < 100) { try { await ridesDB.del(r.id); } catch { } settings.del('activeRide'); return null; }
+  let samples = null;
+  try { const prof = await buildProfile(pts); samples = prof?.samples || null; } catch (e) { console.warn(e); }
+  Object.assign(r, rideStats(pts, samples, profileSettings()));
+  r.name ||= r.routeName || `Ride ${new Date(r.startedAt).toLocaleDateString()}`;
+  try { await ridesDB.put(r); } catch (e) { console.warn(e); toast('Could not save ride'); }
+  settings.del('activeRide'); await loadRides();
+  const prof = profileSettings();
+  if (prof.webhook) sendWebhook(prof, { type: 'ride', ride: rideSummary(r), totals: buildExport(state.rides, prof).totals }).then(() => toast('Ride sent to your webhook')).catch(e => toast('Webhook failed: ' + e.message, 5000));
+  return r;
+}
+async function stopNavigation() {
+  nav.stop(); clearTimeout(persistTimer); persistTimer = null;
+  state.navigating = false; document.body.classList.remove('navigating');
+  $('#nav-idle').hidden = false; $('#nav-active').hidden = true; $('#nav-hud').hidden = true; $('#nav-hud').classList.remove('big'); $('#btn-recenter').hidden = true;
   chart.setProgress(null); try { state.wakeLock?.release(); } catch { } state.wakeLock = null;
-  if (nav.trail.length > 5) {
-    const pts = nav.trail.slice(); cumulative(pts);
-    state.lastRide = { points: pts, ridden: nav.ridden, elapsed: (Date.now() - nav.startTime) / 1000, moving: nav.movingTime };
-    $('#last-ride').hidden = false;
-    $('#last-ride-stats').innerHTML = [[fmtDist(nav.ridden), 'Distance'], [fmtDuration(state.lastRide.moving), 'Moving'], [fmtSpeed(nav.movingTime > 0 ? nav.ridden / nav.movingTime : 0), 'Avg speed']].map(([v, l]) => `<div class="stat"><span class="v">${v}</span><span class="l">${l}</span></div>`).join('');
-  }
+  const r = ride; ride = null;
   setTab('nav'); if (isMobile()) setSheet('half');
+  if (r) {
+    Object.assign(r, nav.snapshot());
+    toast('Saving ride…', 8000);
+    const done = await finalizeRide(r, r.points);
+    if (done) showRideDone(done); else { toast('Ride too short – not saved'); mapApi.setTrail([]); }
+  }
+}
+function showRideDone(r) {
+  state.lastRide = r; $('#ride-done').hidden = false;
+  $('#ride-done-stats').innerHTML = [[fmtDist(r.distance), 'Distance'], ['↑ ' + Math.round(r.ascent || 0) + ' m', 'Ascent'], [fmtDuration(r.movingTime), 'Moving'], [fmtSpeed(r.avgSpeed), 'Avg speed'], [Math.round(r.kcal) + ' kcal', 'Energy']].map(([v, l]) => `<div class="stat"><span class="v">${v}</span><span class="l">${l}</span></div>`).join('');
+  toast(`Ride saved: ${fmtDist(r.distance)}, ${Math.round(r.kcal)} kcal`, 5000);
+}
+async function rideToRoute(r) {
+  toast('Building route…', 8000);
+  const pts = r.points.map(a => ({ lat: a[0], lon: a[1], ele: a[2] ?? undefined, time: a[3] }));
+  const route = await makeRoute({ name: r.name || 'Ride', points: pts, source: 'ride' });
+  return route;
 }
 $('#nav-start').onclick = () => startNavigation(state.route);
 $('#nav-free').onclick = () => startNavigation(null);
-$('#nav-stop').onclick = stopNavigation; $('#hud-stop').onclick = stopNavigation;
-$('#ride-discard').onclick = () => { state.lastRide = null; $('#last-ride').hidden = true; mapApi.setTrail([]); };
-$('#ride-save').onclick = async () => {
-  if (!state.lastRide) return;
-  toast('Saving ride…', 10000);
-  const r = await makeRoute({ name: 'Ride ' + new Date().toLocaleDateString(), points: state.lastRide.points, source: 'ride' });
-  await routesDB.put(serialize(r)); await loadRoutes(); state.lastRide = null; $('#last-ride').hidden = true; mapApi.setTrail([]);
-  setTab('routes'); setActiveRoute(r); toast('Ride saved');
-};
+$('#nav-stop').onclick = stopNavigation; $('#hud-stop').onclick = e => { e.stopPropagation(); stopNavigation(); };
+$('#nav-hud').onclick = () => $('#nav-hud').classList.toggle('big');
+$('#ride-ok').onclick = () => { $('#ride-done').hidden = true; mapApi.setTrail([]); };
+$('#ride-stats-btn').onclick = () => setTab('stats');
+$('#ride-route').onclick = async () => { if (!state.lastRide) return; const route = await rideToRoute(state.lastRide); await routesDB.put(serialize(route)); await loadRoutes(); setTab('routes'); setActiveRoute(route); toast('Saved as route'); };
+
+// Resume an interrupted ride after a reload / crash.
+async function checkResume() {
+  const id = settings.get('activeRide'); if (!id) return;
+  let r = null; try { r = await ridesDB.get(id); } catch { }
+  if (!r || r.status !== 'active') { settings.del('activeRide'); return; }
+  if (!r.points?.length) { try { await ridesDB.del(id); } catch { } settings.del('activeRide'); return; }
+  const banner = $('#resume-banner'); banner.hidden = false;
+  $('#resume-info').textContent = `since ${fmtTime(new Date(r.startedAt))} · ${fmtDist(r.distance || 0)}${r.routeName ? ' · ' + r.routeName : ''}`;
+  mapApi.setTrail(r.points.map(a => ({ lat: a[0], lon: a[1] })));
+  $('#resume-yes').onclick = () => { banner.hidden = true; const route = r.routeId ? state.routes.find(x => x.id === r.routeId) || null : null; startNavigation(route, r); };
+  $('#resume-finish').onclick = async () => { banner.hidden = true; toast('Saving ride…', 8000); const done = await finalizeRide(r, r.points); setTab('nav'); if (done) showRideDone(done); else { toast('Ride too short – discarded'); mapApi.setTrail([]); } };
+  $('#resume-discard').onclick = async () => { if (!confirm('Discard the unfinished ride?')) return; banner.hidden = true; try { await ridesDB.del(id); } catch { } settings.del('activeRide'); mapApi.setTrail([]); };
+}
+
 const roundDist = m => m >= 1000 ? (m / 1000).toFixed(1) + ' km' : Math.max(10, Math.round(m / 10) * 10) + ' m';
 function onNavUpdate(st) {
   const hasRoute = !!nav.route;
+  persistRide();
   if (st.poor) { $('#hud-instr').textContent = 'Poor GPS signal…'; return; }
   if (hasRoute && st.nextHint) {
     $('#hud-icon').textContent = st.nextHint.icon;
@@ -332,11 +391,43 @@ function onNavUpdate(st) {
   if (nav.trail.length % 3 === 0) mapApi.setTrail(nav.trail);
 }
 function onNavEvent(ev) {
-  if (ev.type === 'speak') speak(ev.text);
+  if (ev.type === 'speak') { speak(ev.text); if (!/^In /.test(ev.text)) navigator.vibrate?.(120); }
   else if (ev.type === 'offroute') { speak('You are off route'); navigator.vibrate?.([200, 100, 200]); toast('Off route – head back to the track'); }
   else if (ev.type === 'backontrack') speak('Back on track');
-  else if (ev.type === 'arrived') { speak('You have reached your destination'); toast('Arrived 🎉'); }
+  else if (ev.type === 'arrived') { speak('You have reached your destination'); navigator.vibrate?.([100, 50, 100, 50, 300]); toast('Arrived 🎉'); }
 }
+
+// ---------- stats dashboard
+function download(name, text, type) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+function renderStats() {
+  renderDashboard($('#dashboard'), {
+    rides: state.rides, profile: profileSettings(), metric: state.metric,
+    onMetric: m => { state.metric = m; settings.set('metric', m); renderStats(); },
+    onProfile: p => { settings.set('profile', p); renderStats(); },
+    onShowRide: async r => { const route = await rideToRoute(r); route.id = 'ride:' + r.id; setActiveRoute(route); setTab('routes'); if (isMobile()) setSheet('collapsed'); },
+    onRideMenu: (r, li) => {
+      let m = $('.rl-menu', li); if (m) { m.remove(); return; }
+      m = document.createElement('div'); m.className = 'rl-menu row wrap';
+      m.innerHTML = '<button data-a="gpx">Export GPX</button><button data-a="route">Save as route</button><button data-a="rename">Rename</button><button data-a="del" class="danger">Delete</button>';
+      $('[data-a=gpx]', m).onclick = () => exportGPX({ name: r.name || 'Ride', createdAt: r.startedAt, points: r.points.map(a => ({ lat: a[0], lon: a[1], ele: a[2] ?? undefined, time: a[3] })) });
+      $('[data-a=route]', m).onclick = async () => { const route = await rideToRoute(r); await routesDB.put(serialize(route)); await loadRoutes(); setTab('routes'); setActiveRoute(route); toast('Saved as route'); };
+      $('[data-a=rename]', m).onclick = async () => { const n = prompt('Ride name', r.name || ''); if (n != null && n.trim()) { r.name = n.trim(); await ridesDB.put(r); await loadRides(); renderStats(); } };
+      $('[data-a=del]', m).onclick = async () => { if (!confirm('Delete this ride?')) return; await ridesDB.del(r.id); await loadRides(); renderStats(); };
+      li.appendChild(m);
+    },
+    onExport: async kind => {
+      const data = buildExport(state.rides, profileSettings()), day = new Date().toISOString().slice(0, 10);
+      if (kind === 'json') download(`veloch-rides-${day}.json`, JSON.stringify(data, null, 2), 'application/json');
+      else if (kind === 'csv') download(`veloch-rides-${day}.csv`, ridesCSV(state.rides), 'text/csv');
+      else if (kind === 'copy') { const t = data.totals; const txt = `VeloCH · week ${t.this_week.distanceKm} km / ${t.this_week.kcal} kcal · month ${t.this_month.distanceKm} km / ${t.this_month.kcal} kcal · year ${t.this_year.distanceKm} km, ${t.this_year.rides} rides, ${t.this_year.kcal} kcal`; try { await navigator.clipboard.writeText(txt); toast('Summary copied'); } catch { prompt('Copy:', txt); } }
+    },
+  });
+}
+// Lets another web app embed this page and ask for the stats.
+window.addEventListener('message', e => { if (e.data?.type === 'veloch:getStats') e.source?.postMessage({ type: 'veloch:stats', stats: buildExport(state.rides, profileSettings()) }, e.origin || '*'); });
 
 // ---------- nearby
 const chips = $('#nearby-cats');
@@ -501,7 +592,7 @@ map.on('moveend', () => { const c = map.getCenter(); settings.set('view', { lat:
 buildLayerPanel();
 const v = settings.get('view'); if (v) map.setView([v.lat, v.lon], v.z);
 refreshWaypoints();
-loadRoutes().then(() => { renderNavIdle(); });
+loadRoutes().then(async () => { renderNavIdle(); await loadRides(); await checkResume(); if (location.hash === '#export') { renderStats(); download(`veloch-rides-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(buildExport(state.rides, profileSettings()), null, 2), 'application/json'); } });
 if (!isMobile()) setSheet('full');
 // Debug / automation hook (e.g. simulate GPS: __veloch.onGeo({coords:{latitude,longitude,accuracy,heading:null,speed:null},timestamp:Date.now()}))
-window.__veloch = { state, nav, mapApi, onGeo, importFiles, setTab, startNavigation, stopNavigation };
+window.__veloch = { state, nav, mapApi, onGeo, importFiles, setTab, startNavigation, stopNavigation, loadRides, renderStats };

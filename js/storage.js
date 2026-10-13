@@ -1,31 +1,38 @@
-// IndexedDB for routes, localStorage for settings.
-const DB = 'veloch', STORE = 'routes';
+// IndexedDB for routes and rides, localStorage for settings.
+const DB = 'veloch', ROUTES = 'routes', RIDES = 'rides';
 let dbp = null;
 function open() {
   return dbp ||= new Promise((res, rej) => {
-    const r = indexedDB.open(DB, 1);
-    r.onupgradeneeded = () => r.result.createObjectStore(STORE, { keyPath: 'id' });
+    const r = indexedDB.open(DB, 2);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      if (!d.objectStoreNames.contains(ROUTES)) d.createObjectStore(ROUTES, { keyPath: 'id' });
+      if (!d.objectStoreNames.contains(RIDES)) d.createObjectStore(RIDES, { keyPath: 'id' });
+    };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
   });
 }
-async function tx(mode, fn) {
+async function tx(store, mode, fn) {
   const d = await open();
   return new Promise((res, rej) => {
-    const t = d.transaction(STORE, mode);
-    const req = fn(t.objectStore(STORE));
+    const t = d.transaction(store, mode);
+    const req = fn(t.objectStore(store));
     t.oncomplete = () => res(req?.result);
     t.onerror = () => rej(t.error);
     t.onabort = () => rej(t.error);
   });
 }
-export const routesDB = {
-  all: () => tx('readonly', s => s.getAll()),
-  get: id => tx('readonly', s => s.get(id)),
-  put: r => tx('readwrite', s => s.put(r)),
-  del: id => tx('readwrite', s => s.delete(id)),
-};
+const api = store => ({
+  all: () => tx(store, 'readonly', s => s.getAll()),
+  get: id => tx(store, 'readonly', s => s.get(id)),
+  put: r => tx(store, 'readwrite', s => s.put(r)),
+  del: id => tx(store, 'readwrite', s => s.delete(id)),
+});
+export const routesDB = api(ROUTES);
+export const ridesDB = api(RIDES);
 export const settings = {
   get(k, d) { try { const v = localStorage.getItem('veloch:' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('veloch:' + k, JSON.stringify(v)); } catch { } },
+  del(k) { try { localStorage.removeItem('veloch:' + k); } catch { } },
 };

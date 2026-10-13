@@ -20,10 +20,29 @@ your browser and talks only to free public services.
 - **GPS navigation** – follow-the-track for imported GPX, turn-by-turn for planned routes,
   voice instructions, off-route warning, remaining distance / climb / ETA, screen stays on,
   recorded track that can be saved as a route.
+- **Rides are saved automatically** – every navigation or free ride is written to the
+  device every few seconds. If the page reloads or the OS kills the app, reopen it and tap
+  *Resume* to continue the same ride (or *Finish* to save it as it is).
+- **Stats dashboard** – weekly goal with progress, totals for week / month / year / all
+  time, a 12-week chart (distance, calories, moving time, climbing), personal bests and
+  the ride list. Calories come from a physics model (rolling resistance, air drag,
+  climbing from the swisstopo terrain model) using your weight and bike weight.
+- **Export & connect** – JSON and CSV export, a copyable summary, a webhook that POSTs a
+  JSON summary after every ride, a `#export` link that downloads the JSON, and a
+  `postMessage` API (`{type:"veloch:getStats"}`) for apps that embed the page.
 - **Nearby** – train stations, bus/Postauto stops, cable cars / gondolas / chairlifts /
   funiculars, boat piers, bike shops and drinking water from OpenStreetMap, with opening
   hours (evaluated for "open now / closes at"), operator, website, bike transport info,
   and live departures from the Swiss public transport timetable.
+
+## Background GPS – the honest limitation
+
+Web apps cannot receive location updates while they are closed or while the phone is
+locked; iOS and Android suspend them. VeloCH keeps the screen awake while a ride is
+running, so mount the phone and leave the app on screen. If the app is still interrupted,
+nothing is lost: the ride resumes on reopening. True background tracking would need a
+native wrapper (for example Capacitor with a background-geolocation plugin) around this
+same code.
 
 ## Run it locally
 
@@ -73,5 +92,5 @@ lifts only have seasonal information, so the popup also offers the operator webs
 - `index.html`, `css/style.css` – layout (bottom sheet on phones, side panel on desktop)
 - `js/main.js` – app glue; `js/map.js` – layers; `js/gpx.js`, `js/elevation.js`,
   `js/profile.js`, `js/router.js`, `js/nav.js`, `js/nearby.js`, `js/storage.js`,
-  `js/offline.js`, `js/geo.js`
+  `js/offline.js`, `js/geo.js`, `js/fitness.js` (stats & calories), `js/dashboard.js`
 - `sw.js` – service worker (offline app shell + tile cache), `manifest.webmanifest`, `icons/`
