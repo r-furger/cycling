@@ -1,12 +1,12 @@
 // Service worker: offline app shell + tile caching for swisstopo layers.
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL = 'veloch-shell-' + VERSION;
 const TILES = 'veloch-tiles-v1';
 const RUNTIME = 'veloch-runtime-v1';
 const SHELL_URLS = [
   './', './index.html', './css/style.css', './manifest.webmanifest',
   './js/main.js', './js/map.js', './js/geo.js', './js/gpx.js', './js/elevation.js', './js/profile.js',
-  './js/router.js', './js/nav.js', './js/nearby.js', './js/storage.js', './js/offline.js', './js/fitness.js', './js/dashboard.js', './js/photos.js',
+  './js/router.js', './js/nav.js', './js/nearby.js', './js/storage.js', './js/offline.js', './js/fitness.js', './js/dashboard.js',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css',
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js',

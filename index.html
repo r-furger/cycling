@@ -100,13 +100,13 @@
         <div id="ride-done" hidden>
           <h4>Ride finished</h4>
           <div class="stats" id="ride-done-stats"></div>
-          <div class="row wrap"><button class="primary" id="ride-stats-btn">Open Stats</button><button id="ride-photos">📷 Add photos</button><button id="ride-route">Save track as route</button><button id="ride-ok">OK</button></div>
+          <div class="row wrap"><button class="primary" id="ride-stats-btn">Open Stats</button><button id="ride-route">Save track as route</button><button id="ride-ok">OK</button></div>
         </div>
         <p class="hint small">Every ride is saved automatically while you ride, so a reload or crash loses nothing – reopen the app and tap Resume. Phones stop GPS for web apps that are closed or in the background, so keep VeloCH on screen (it stays awake) while riding.</p>
       </div>
       <div id="nav-active" hidden>
         <div class="stats" id="nav-stats"></div>
-        <div class="row"><button class="danger" id="nav-stop">■ Stop</button><button id="nav-cam">📷 Photo</button><button id="nav-recenter">Re-center</button></div>
+        <div class="row"><button class="danger" id="nav-stop">■ Stop</button><button id="nav-recenter">Re-center</button></div>
         <p class="hint small">The orange dashed line is your recorded track. Drag the map to look around; tap Re-center to follow again.</p>
       </div>
     </section>
@@ -135,21 +135,11 @@
     <div class="hud-top">
       <span id="hud-icon">⤳</span>
       <div class="hud-text"><div id="hud-instr">Waiting for GPS…</div><div id="hud-then"></div></div>
-      <button id="hud-cam" title="Take a photo">📷</button>
       <button id="hud-stop" title="Stop navigation">■</button>
     </div>
     <div id="hud-stats"></div>
   </div>
   <button id="btn-recenter" hidden>⌖ Re-center</button>
-  <input type="file" id="cam-input" accept="image/*" capture="environment" hidden>
-  <input type="file" id="photo-input" accept="image/*" multiple hidden>
-  <div id="lightbox" hidden>
-    <img id="lb-img" alt="Ride photo">
-    <div class="lb-bar">
-      <span id="lb-cap"></span>
-      <div class="lb-btns"><button id="lb-prev" title="Previous">‹</button><button id="lb-next" title="Next">›</button><button id="lb-share" title="Share / save">⇪</button><button id="lb-del" class="danger" title="Delete">🗑</button><button id="lb-close" title="Close">✕</button></div>
-    </div>
-  </div>
   <div id="toast" hidden></div>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" crossorigin=""></script>

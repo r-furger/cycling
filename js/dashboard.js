@@ -37,7 +37,7 @@ export function renderDashboard(el, { rides, profile, metric = 'distance', onSho
     </div>` : ''}
     <h4>Rides (${done.length})</h4>
     <ul class="ride-list">${done.length ? done.map(r => `<li data-id="${r.id}">
-      <div class="rl-main"><strong>${esc(rideTitle(r))}</strong><div class="meta">${fmtDate(r.startedAt)} · ${fmtDist(r.distance || 0)} · ↑ ${Math.round(r.ascent || 0)} m · ${fmtDuration(r.movingTime || 0)} · ${Math.round(r.kcal || 0)} kcal · ${fmtSpeed(r.avgSpeed || 0)} avg${r.photoCount ? ` · 📷 ${r.photoCount}` : ''}</div></div>
+      <div class="rl-main"><strong>${esc(rideTitle(r))}</strong><div class="meta">${fmtDate(r.startedAt)} · ${fmtDist(r.distance || 0)} · ↑ ${Math.round(r.ascent || 0)} m · ${fmtDuration(r.movingTime || 0)} · ${Math.round(r.kcal || 0)} kcal · ${fmtSpeed(r.avgSpeed || 0)} avg</div></div>
       <button data-a="menu" title="More">⋯</button></li>`).join('') : '<li class="none">No rides yet. Start a navigation or free ride and finish it with Stop – every ride is saved here automatically.</li>'}
     </ul>
     <h4>Your profile</h4>
@@ -107,7 +107,7 @@ function niceStep(raw) { if (!(raw > 0)) return 1; const p = 10 ** Math.floor(Ma
 export function rideSummary(r) {
   return { id: r.id, name: rideTitle(r), startedAt: new Date(r.startedAt).toISOString(), endedAt: r.endedAt ? new Date(r.endedAt).toISOString() : null, mode: r.mode, routeName: r.routeName || null,
     distanceKm: +((r.distance || 0) / 1000).toFixed(2), ascentM: Math.round(r.ascent || 0), descentM: Math.round(r.descent || 0), movingTimeMin: Math.round((r.movingTime || 0) / 60), elapsedMin: r.endedAt ? Math.round((r.endedAt - r.startedAt) / 60000) : null,
-    avgSpeedKmh: +((r.avgSpeed || 0) * 3.6).toFixed(1), maxSpeedKmh: +((r.maxSpeed || 0) * 3.6).toFixed(1), kcal: Math.round(r.kcal || 0), photos: r.photoCount || 0 };
+    avgSpeedKmh: +((r.avgSpeed || 0) * 3.6).toFixed(1), maxSpeedKmh: +((r.maxSpeed || 0) * 3.6).toFixed(1), kcal: Math.round(r.kcal || 0) };
 }
 export function buildExport(rides, profile) {
   const done = rides.filter(r => r.status === 'done').sort((a, b) => b.startedAt - a.startedAt);

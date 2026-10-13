@@ -32,7 +32,6 @@ const api = store => ({
 });
 export const routesDB = api(ROUTES);
 export const ridesDB = api(RIDES);
-export const photosDB = { ...api(PHOTOS), byRide: rideId => tx(PHOTOS, 'readonly', s => s.index('rideId').getAll(rideId)) };
 export const settings = {
   get(k, d) { try { const v = localStorage.getItem('veloch:' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('veloch:' + k, JSON.stringify(v)); } catch { } },
