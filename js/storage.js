@@ -1,13 +1,14 @@
 // IndexedDB for routes and rides, localStorage for settings.
-const DB = 'veloch', ROUTES = 'routes', RIDES = 'rides';
+const DB = 'veloch', ROUTES = 'routes', RIDES = 'rides', PHOTOS = 'photos';
 let dbp = null;
 function open() {
   return dbp ||= new Promise((res, rej) => {
-    const r = indexedDB.open(DB, 2);
+    const r = indexedDB.open(DB, 3);
     r.onupgradeneeded = () => {
       const d = r.result;
       if (!d.objectStoreNames.contains(ROUTES)) d.createObjectStore(ROUTES, { keyPath: 'id' });
       if (!d.objectStoreNames.contains(RIDES)) d.createObjectStore(RIDES, { keyPath: 'id' });
+      if (!d.objectStoreNames.contains(PHOTOS)) d.createObjectStore(PHOTOS, { keyPath: 'id' }).createIndex('rideId', 'rideId');
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -31,6 +32,7 @@ const api = store => ({
 });
 export const routesDB = api(ROUTES);
 export const ridesDB = api(RIDES);
+export const photosDB = { ...api(PHOTOS), byRide: rideId => tx(PHOTOS, 'readonly', s => s.index('rideId').getAll(rideId)) };
 export const settings = {
   get(k, d) { try { const v = localStorage.getItem('veloch:' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem('veloch:' + k, JSON.stringify(v)); } catch { } },

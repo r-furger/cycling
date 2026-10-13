@@ -102,5 +102,15 @@ export function createMap(el) {
   }
   function clearNearby() { nearbyGroup.clearLayers(); }
 
-  return { map, setBase, setOverlay, showRoute, clearRoute, fitRoute, hasRoute: () => !!routeLine, setHover, setPosition, setTrail, setWaypoints, setNearby, clearNearby };
+  const photoGroup = L.layerGroup().addTo(map); let photoUrls = [];
+  function setPhotos(photos, onClick) {
+    photoGroup.clearLayers(); photoUrls.forEach(u => URL.revokeObjectURL(u)); photoUrls = [];
+    for (const ph of photos) {
+      const url = URL.createObjectURL(ph.thumb || ph.blob); photoUrls.push(url);
+      const m = L.marker([ph.lat, ph.lon], { icon: L.divIcon({ className: 'photo-marker', html: `<div class="photo-pin" style="background-image:url('${url}')"></div>`, iconSize: [44, 44], iconAnchor: [22, 44] }), zIndexOffset: 500 }).addTo(photoGroup);
+      m.on('click', () => onClick(ph));
+    }
+  }
+
+  return { map, setBase, setOverlay, showRoute, clearRoute, fitRoute, hasRoute: () => !!routeLine, setHover, setPosition, setTrail, setWaypoints, setNearby, clearNearby, setPhotos };
 }

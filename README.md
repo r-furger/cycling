@@ -27,9 +27,13 @@ your browser and talks only to free public services.
   time, a 12-week chart (distance, calories, moving time, climbing), personal bests and
   the ride list. Calories come from a physics model (rolling resistance, air drag,
   climbing from the swisstopo terrain model) using your weight and bike weight.
-- **Export & connect** – JSON and CSV export, a copyable summary, a webhook that POSTs a
-  JSON summary after every ride, a `#export` link that downloads the JSON, and a
-  `postMessage` API (`{type:"veloch:getStats"}`) for apps that embed the page.
+- **Ride photos** – tap the camera in the ride display to take a photo; it is pinned on
+  the map at your GPS position and attached to the ride. Photos can also be added to a
+  ride later from the gallery: they are placed by their EXIF location, or by matching the
+  photo time to your track. Tap a pin for the full-screen viewer (share, delete), and the
+  ride's GPX export carries the photos as waypoints. Photos are stored on the device
+  (downscaled to 1600 px) and never uploaded anywhere.
+- **Export** – rides as JSON or CSV, plus a copyable summary.
 - **Nearby** – train stations, bus/Postauto stops, cable cars / gondolas / chairlifts /
   funiculars, boat piers, bike shops and drinking water from OpenStreetMap, with opening
   hours (evaluated for "open now / closes at"), operator, website, bike transport info,
@@ -92,5 +96,5 @@ lifts only have seasonal information, so the popup also offers the operator webs
 - `index.html`, `css/style.css` – layout (bottom sheet on phones, side panel on desktop)
 - `js/main.js` – app glue; `js/map.js` – layers; `js/gpx.js`, `js/elevation.js`,
   `js/profile.js`, `js/router.js`, `js/nav.js`, `js/nearby.js`, `js/storage.js`,
-  `js/offline.js`, `js/geo.js`, `js/fitness.js` (stats & calories), `js/dashboard.js`
+  `js/offline.js`, `js/geo.js`, `js/fitness.js` (stats & calories), `js/dashboard.js`, `js/photos.js`
 - `sw.js` – service worker (offline app shell + tile cache), `manifest.webmanifest`, `icons/`

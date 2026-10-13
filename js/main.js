@@ -7,9 +7,10 @@ import { ElevationChart } from './profile.js';
 import { PROFILES, routeBRouter } from './router.js';
 import { Navigator } from './nav.js';
 import { CATEGORIES, searchNearby, describeOpening, departures, typeLabel } from './nearby.js';
-import { routesDB, ridesDB, settings } from './storage.js';
+import { routesDB, ridesDB, photosDB, settings } from './storage.js';
+import { processImage, readExif, placePhoto } from './photos.js';
 import { DEFAULT_PROFILE, rideStats, estimateRouteKcal } from './fitness.js';
-import { renderDashboard, buildExport, ridesCSV, rideSummary, sendWebhook } from './dashboard.js';
+import { renderDashboard, buildExport, ridesCSV } from './dashboard.js';
 import { tilesForRoute, cacheTiles, tileCacheInfo, clearTileCache, tileUrl } from './offline.js';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -23,6 +24,7 @@ const state = {
   plan: { waypoints: [], profile: settings.get('profile', 'trekking'), abort: null, id: null },
   navigating: false, follow: true, pos: null, headingPos: null, heading: null, watchId: null, flyOnFix: false,
   nearby: [], deferredInstall: null, wakeLock: null, lastRide: null, rides: [], metric: settings.get('metric', 'distance'),
+  photos: [], photoRide: null, lbIndex: -1,
 };
 const profileSettings = () => ({ ...DEFAULT_PROFILE, ...settings.get('profile', {}) });
 
@@ -91,7 +93,7 @@ function setActiveRoute(route, { fit = true } = {}) {
   renderRouteCard(); renderNavIdle();
 }
 function clearActiveRoute() {
-  state.route = null; mapApi.clearRoute(); chart.setData(null);
+  state.route = null; mapApi.clearRoute(); chart.setData(null); clearPhotos();
   $('#profile-box').hidden = true; document.body.classList.remove('has-profile'); $('#btn-fit').hidden = true;
   renderRouteCard(); renderNavIdle(); renderPlanStats();
 }
@@ -293,6 +295,7 @@ async function startNavigation(route, resumeRide = null) {
   document.body.classList.add('navigating'); document.body.classList.remove('planning');
   nav.start(route, resumeRide); startGPS(); requestWakeLock();
   mapApi.setTrail(nav.trail);
+  if (resumeRide) showPhotos(ride.id); else clearPhotos();
   if (route) { setActiveRoute(route, { fit: false }); }
   if (state.pos) map.setView([state.pos.lat, state.pos.lon], Math.max(map.getZoom(), 15)); else state.flyOnFix = true;
   $('#nav-idle').hidden = true; $('#nav-active').hidden = false; $('#ride-done').hidden = true; $('#nav-hud').hidden = false; $('#nav-hud').classList.remove('off');
@@ -316,8 +319,6 @@ async function finalizeRide(r, pointsArr) {
   r.name ||= r.routeName || `Ride ${new Date(r.startedAt).toLocaleDateString()}`;
   try { await ridesDB.put(r); } catch (e) { console.warn(e); toast('Could not save ride'); }
   settings.del('activeRide'); await loadRides();
-  const prof = profileSettings();
-  if (prof.webhook) sendWebhook(prof, { type: 'ride', ride: rideSummary(r), totals: buildExport(state.rides, prof).totals }).then(() => toast('Ride sent to your webhook')).catch(e => toast('Webhook failed: ' + e.message, 5000));
   return r;
 }
 async function stopNavigation() {
@@ -335,7 +336,7 @@ async function stopNavigation() {
   }
 }
 function showRideDone(r) {
-  state.lastRide = r; $('#ride-done').hidden = false;
+  state.lastRide = r; $('#ride-done').hidden = false; showPhotos(r.id);
   $('#ride-done-stats').innerHTML = [[fmtDist(r.distance), 'Distance'], ['↑ ' + Math.round(r.ascent || 0) + ' m', 'Ascent'], [fmtDuration(r.movingTime), 'Moving'], [fmtSpeed(r.avgSpeed), 'Avg speed'], [Math.round(r.kcal) + ' kcal', 'Energy']].map(([v, l]) => `<div class="stat"><span class="v">${v}</span><span class="l">${l}</span></div>`).join('');
   toast(`Ride saved: ${fmtDist(r.distance)}, ${Math.round(r.kcal)} kcal`, 5000);
 }
@@ -361,7 +362,7 @@ async function checkResume() {
   if (!r.points?.length) { try { await ridesDB.del(id); } catch { } settings.del('activeRide'); return; }
   const banner = $('#resume-banner'); banner.hidden = false;
   $('#resume-info').textContent = `since ${fmtTime(new Date(r.startedAt))} · ${fmtDist(r.distance || 0)}${r.routeName ? ' · ' + r.routeName : ''}`;
-  mapApi.setTrail(r.points.map(a => ({ lat: a[0], lon: a[1] })));
+  mapApi.setTrail(r.points.map(a => ({ lat: a[0], lon: a[1] }))); showPhotos(r.id);
   $('#resume-yes').onclick = () => { banner.hidden = true; const route = r.routeId ? state.routes.find(x => x.id === r.routeId) || null : null; startNavigation(route, r); };
   $('#resume-finish').onclick = async () => { banner.hidden = true; toast('Saving ride…', 8000); const done = await finalizeRide(r, r.points); setTab('nav'); if (done) showRideDone(done); else { toast('Ride too short – discarded'); mapApi.setTrail([]); } };
   $('#resume-discard').onclick = async () => { if (!confirm('Discard the unfinished ride?')) return; banner.hidden = true; try { await ridesDB.del(id); } catch { } settings.del('activeRide'); mapApi.setTrail([]); };
@@ -397,6 +398,86 @@ function onNavEvent(ev) {
   else if (ev.type === 'arrived') { speak('You have reached your destination'); navigator.vibrate?.([100, 50, 100, 50, 300]); toast('Arrived 🎉'); }
 }
 
+// ---------- photos
+let photoTarget = null;
+async function showPhotos(rideId) {
+  try { state.photos = (await photosDB.byRide(rideId)).sort((a, b) => a.time - b.time); } catch { state.photos = []; }
+  state.photoRide = rideId; mapApi.setPhotos(state.photos, openLightbox);
+}
+function clearPhotos() { state.photos = []; state.photoRide = null; mapApi.setPhotos([], () => { }); }
+// live=true: taken right now during the ride, pinned at the current GPS position.
+async function addPhotos(files, rideRec, live) {
+  if (!rideRec) return toast('Start a ride first – photos are attached to rides');
+  let added = 0, how = '';
+  for (const f of files) {
+    try {
+      toast(`Adding photo ${added + 1}/${files.length}…`, 15000);
+      const [exif, img] = await Promise.all([readExif(f), processImage(f)]);
+      const pos = live && state.pos ? { lat: state.pos.lat, lon: state.pos.lon, how: 'GPS position' } : placePhoto(rideRec.points, exif, live ? state.pos : null);
+      if (!pos) throw new Error('No position for this photo yet');
+      const ph = { id: uuid(), rideId: rideRec.id, time: live ? Date.now() : (exif.time || f.lastModified || Date.now()), lat: pos.lat, lon: pos.lon, how: pos.how, blob: img.blob, thumb: img.thumb, width: img.width, height: img.height };
+      await photosDB.put(ph); added++; how = pos.how;
+    } catch (e) { toast(`Photo failed: ${e.message}`, 5000); }
+  }
+  if (!added) return;
+  rideRec.photoCount = (rideRec.photoCount || 0) + added;
+  try { await ridesDB.put(rideRec); } catch { }
+  await loadRides();
+  if (state.photoRide === rideRec.id || live) await showPhotos(rideRec.id);
+  if (state.tab === 'stats') renderStats();
+  toast(added === 1 ? `Photo pinned (${how})` : `${added} photos added`, 4000);
+}
+function pickPhotosFor(r) { photoTarget = r; $('#photo-input').click(); }
+$('#photo-input').addEventListener('change', async e => { const files = [...e.target.files]; e.target.value = ''; if (files.length && photoTarget) await addPhotos(files, photoTarget, false); });
+$('#cam-input').addEventListener('change', async e => { const files = [...e.target.files]; e.target.value = ''; if (files.length) await addPhotos(files, ride, true); });
+const takePhoto = () => { if (!ride) return toast('Start a ride first'); $('#cam-input').click(); };
+$('#hud-cam').onclick = e => { e.stopPropagation(); takePhoto(); };
+$('#nav-cam').onclick = takePhoto;
+$('#ride-photos').onclick = () => state.lastRide && pickPhotosFor(state.lastRide);
+async function photoStrip(el, r) {
+  const photos = (await photosDB.byRide(r.id).catch(() => [])).sort((a, b) => a.time - b.time);
+  el.innerHTML = '';
+  for (const ph of photos) { const img = document.createElement('img'); img.src = URL.createObjectURL(ph.thumb || ph.blob); img.onclick = async () => { if (state.photoRide !== r.id) await showPhotos(r.id); openLightbox(ph); }; el.appendChild(img); }
+}
+async function exportRideGPX(r) {
+  const photos = (await photosDB.byRide(r.id).catch(() => [])).sort((a, b) => a.time - b.time);
+  exportGPX({ name: r.name || 'Ride', createdAt: r.startedAt, points: r.points.map(a => ({ lat: a[0], lon: a[1], ele: a[2] ?? undefined, time: a[3] })), waypoints: photos.map((ph, i) => ({ lat: ph.lat, lon: ph.lon, name: `Photo ${i + 1} · ${fmtTime(new Date(ph.time))}` })) });
+}
+// Lightbox
+let lbUrl = null;
+function openLightbox(ph) {
+  const i = state.photos.findIndex(x => x.id === ph.id); state.lbIndex = i >= 0 ? i : 0;
+  renderLightbox(); $('#lightbox').hidden = false;
+}
+function renderLightbox() {
+  const ph = state.photos[state.lbIndex]; if (!ph) { closeLightbox(); return; }
+  if (lbUrl) URL.revokeObjectURL(lbUrl); lbUrl = URL.createObjectURL(ph.blob); $('#lb-img').src = lbUrl;
+  $('#lb-cap').textContent = `${state.lbIndex + 1}/${state.photos.length} · ${new Date(ph.time).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · ${ph.how}`;
+  $('#lb-prev').disabled = state.lbIndex <= 0; $('#lb-next').disabled = state.lbIndex >= state.photos.length - 1;
+  map.panTo([ph.lat, ph.lon]);
+}
+function closeLightbox() { $('#lightbox').hidden = true; if (lbUrl) { URL.revokeObjectURL(lbUrl); lbUrl = null; } }
+$('#lb-close').onclick = closeLightbox;
+$('#lb-prev').onclick = () => { state.lbIndex--; renderLightbox(); };
+$('#lb-next').onclick = () => { state.lbIndex++; renderLightbox(); };
+$('#lb-img').onclick = () => { if (state.lbIndex < state.photos.length - 1) { state.lbIndex++; renderLightbox(); } };
+$('#lb-share').onclick = async () => {
+  const ph = state.photos[state.lbIndex]; if (!ph) return;
+  const file = new File([ph.blob], `veloch-${new Date(ph.time).toISOString().slice(0, 16).replace(/[:T]/g, '-')}.jpg`, { type: 'image/jpeg' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) { try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === 'AbortError') return; } }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = file.name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+};
+$('#lb-del').onclick = async () => {
+  const ph = state.photos[state.lbIndex]; if (!ph || !confirm('Delete this photo?')) return;
+  await photosDB.del(ph.id);
+  const r = state.rides.find(x => x.id === ph.rideId) || (ride?.id === ph.rideId ? ride : null);
+  if (r) { r.photoCount = Math.max(0, (r.photoCount || 1) - 1); try { await ridesDB.put(r); } catch { } }
+  await loadRides(); await showPhotos(ph.rideId);
+  if (state.photos.length) { state.lbIndex = Math.min(state.lbIndex, state.photos.length - 1); renderLightbox(); } else closeLightbox();
+  if (state.tab === 'stats') renderStats();
+};
+document.addEventListener('keydown', e => { if ($('#lightbox').hidden) return; if (e.key === 'Escape') closeLightbox(); if (e.key === 'ArrowRight') $('#lb-next').click(); if (e.key === 'ArrowLeft') $('#lb-prev').click(); });
+
 // ---------- stats dashboard
 function download(name, text, type) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; document.body.appendChild(a); a.click();
@@ -407,15 +488,17 @@ function renderStats() {
     rides: state.rides, profile: profileSettings(), metric: state.metric,
     onMetric: m => { state.metric = m; settings.set('metric', m); renderStats(); },
     onProfile: p => { settings.set('profile', p); renderStats(); },
-    onShowRide: async r => { const route = await rideToRoute(r); route.id = 'ride:' + r.id; setActiveRoute(route); setTab('routes'); if (isMobile()) setSheet('collapsed'); },
+    onShowRide: async r => { const route = await rideToRoute(r); route.id = 'ride:' + r.id; setActiveRoute(route); showPhotos(r.id); setTab('routes'); if (isMobile()) setSheet('collapsed'); },
     onRideMenu: (r, li) => {
       let m = $('.rl-menu', li); if (m) { m.remove(); return; }
       m = document.createElement('div'); m.className = 'rl-menu row wrap';
-      m.innerHTML = '<button data-a="gpx">Export GPX</button><button data-a="route">Save as route</button><button data-a="rename">Rename</button><button data-a="del" class="danger">Delete</button>';
-      $('[data-a=gpx]', m).onclick = () => exportGPX({ name: r.name || 'Ride', createdAt: r.startedAt, points: r.points.map(a => ({ lat: a[0], lon: a[1], ele: a[2] ?? undefined, time: a[3] })) });
+      m.innerHTML = '<button data-a="photos">📷 Add photos</button><button data-a="gpx">Export GPX</button><button data-a="route">Save as route</button><button data-a="rename">Rename</button><button data-a="del" class="danger">Delete</button><div class="photo-strip"></div>';
+      $('[data-a=photos]', m).onclick = () => pickPhotosFor(r);
+      photoStrip($('.photo-strip', m), r);
+      $('[data-a=gpx]', m).onclick = () => exportRideGPX(r);
       $('[data-a=route]', m).onclick = async () => { const route = await rideToRoute(r); await routesDB.put(serialize(route)); await loadRoutes(); setTab('routes'); setActiveRoute(route); toast('Saved as route'); };
       $('[data-a=rename]', m).onclick = async () => { const n = prompt('Ride name', r.name || ''); if (n != null && n.trim()) { r.name = n.trim(); await ridesDB.put(r); await loadRides(); renderStats(); } };
-      $('[data-a=del]', m).onclick = async () => { if (!confirm('Delete this ride?')) return; await ridesDB.del(r.id); await loadRides(); renderStats(); };
+      $('[data-a=del]', m).onclick = async () => { if (!confirm('Delete this ride and its photos?')) return; for (const ph of await photosDB.byRide(r.id).catch(() => [])) await photosDB.del(ph.id); await ridesDB.del(r.id); if (state.photoRide === r.id) clearPhotos(); await loadRides(); renderStats(); };
       li.appendChild(m);
     },
     onExport: async kind => {
@@ -426,8 +509,6 @@ function renderStats() {
     },
   });
 }
-// Lets another web app embed this page and ask for the stats.
-window.addEventListener('message', e => { if (e.data?.type === 'veloch:getStats') e.source?.postMessage({ type: 'veloch:stats', stats: buildExport(state.rides, profileSettings()) }, e.origin || '*'); });
 
 // ---------- nearby
 const chips = $('#nearby-cats');
@@ -592,7 +673,7 @@ map.on('moveend', () => { const c = map.getCenter(); settings.set('view', { lat:
 buildLayerPanel();
 const v = settings.get('view'); if (v) map.setView([v.lat, v.lon], v.z);
 refreshWaypoints();
-loadRoutes().then(async () => { renderNavIdle(); await loadRides(); await checkResume(); if (location.hash === '#export') { renderStats(); download(`veloch-rides-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(buildExport(state.rides, profileSettings()), null, 2), 'application/json'); } });
+loadRoutes().then(async () => { renderNavIdle(); await loadRides(); await checkResume(); });
 if (!isMobile()) setSheet('full');
 // Debug / automation hook (e.g. simulate GPS: __veloch.onGeo({coords:{latitude,longitude,accuracy,heading:null,speed:null},timestamp:Date.now()}))
 window.__veloch = { state, nav, mapApi, onGeo, importFiles, setTab, startNavigation, stopNavigation, loadRides, renderStats };
